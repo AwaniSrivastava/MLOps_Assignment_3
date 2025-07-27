@@ -1,5 +1,13 @@
 FROM python:3.12.4-slim-bullseye
 
+
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+
 WORKDIR /app
 
 # Copy only requirements.txt and install dependencies
