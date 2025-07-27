@@ -1,15 +1,13 @@
-FROM python:3.9-slim
+FROM python:3.12.4-slim-bullseye
 
 WORKDIR /app
 
-# Install dependencies
+# Copy only requirements.txt and install dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --upgrade pip
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy only necessary files
-COPY src/predict.py .
-COPY src/quantize.py .
 COPY linear_regression.joblib .
+COPY src/predict.py .
 
-CMD ["python", "predict.py"]
+CMD ["python", "predict.py"]
