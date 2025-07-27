@@ -1,60 +1,56 @@
 import numpy as np
-import torch
-import torch.nn as nn
 from joblib import load, dump
 
-# Load sklearn model
-sklearn_model = load('linear_regression.joblib')
-coef = sklearn_model.coef_
-intercept = sklearn_model.intercept_
+def safe_quantize(model):
+    """Robust quantization with proper rounding and scaling"""
+    coef = model.coef_
+    intercept = model.intercept_
+    
+    # Quantize coefficients with dynamic range
+    coef_min, coef_max = coef.min(), coef.max()
+    coef_range = coef_max - coef_min
+    
+    # Handle case where all coefficients are equal
+    if coef_range < 1e-10:
+        coef_scale = 1.0
+        coef_zero = 0
+        quant_coef = np.zeros_like(coef, dtype=np.uint8)
+    else:
+        coef_scale = coef_range / 255
+        coef_zero = np.round(coef_min / coef_scale)
+        quant_coef = np.clip(np.round((coef - coef_min) / coef_scale), 0, 255).astype(np.uint8)
+    
+    # Quantize intercept with separate scaling
+    int_scale = max(abs(intercept) / 127, 1e-10)
+    quant_intercept = np.clip(np.round(intercept / int_scale), -128, 127).astype(np.int8)
+    
+    params = {
+        'coef': quant_coef,
+        'coef_scale': float(coef_scale),
+        'coef_zero': int(coef_zero),
+        'intercept': quant_intercept,
+        'intercept_scale': float(int_scale)
+    }
+    
+    # Verify reconstruction
+    recon_coef = quant_coef * coef_scale + coef_min
+    recon_intercept = quant_intercept * int_scale
+    
+    print(f"Original coef[0]: {coef[0]:.6f}, Reconstructed: {recon_coef[0]:.6f}")
+    print(f"Original intercept: {intercept:.6f}, Reconstructed: {recon_intercept:.6f}")
+    
+    # More tolerant check
+    coef_error = np.max(np.abs(recon_coef - coef))
+    int_error = np.abs(recon_intercept - intercept)
+    
+    if coef_error > 1e-4 or int_error > 1e-4:
+        print(f"Warning: Reconstruction error may be significant (coef: {coef_error:.6f}, int: {int_error:.6f})")
+    else:
+        print("Reconstruction successful!")
+    
+    return params
 
-# Save unquantized parameters
-unquant_params = {
-    'coef': coef,
-    'intercept': intercept
-}
-dump(unquant_params, 'unquant_params.joblib')
-
-# Quantization function
-def quantize(x, scale, zero_point, dtype=np.uint8):
-    return np.clip(np.round(x/scale + zero_point), np.iinfo(dtype).min, np.iinfo(dtype).max)
-
-# Calculate scale and zero point
-rmin, rmax = min(coef.min(), intercept.min()), max(coef.max(), intercept.max())
-qmin, qmax = 0, 255  # uint8 range
-scale = (rmax - rmin) / (qmax - qmin)
-zero_point = qmin - rmin / scale
-
-# Quantize parameters
-quant_coef = quantize(coef, scale, zero_point)
-quant_intercept = quantize(intercept, scale, zero_point)
-
-# Save quantized parameters
-quant_params = {
-    'coef': quant_coef,
-    'intercept': quant_intercept,
-    'scale': scale,
-    'zero_point': zero_point
-}
-dump(quant_params, 'quant_params.joblib')
-
-# Create PyTorch model with dequantized weights
-class LinearModel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.linear = nn.Linear(8, 1)
-        
-        # Dequantize and set weights
-        dequant_coef = (quant_coef.astype(np.float32) - zero_point) * scale
-        dequant_intercept = (quant_intercept.astype(np.float32) - zero_point) * scale
-        
-        self.linear.weight.data = torch.from_numpy(dequant_coef).unsqueeze(0)
-        self.linear.bias.data = torch.from_numpy(dequant_intercept)
-
-    def forward(self, x):
-        return self.linear(x)
-
-# Test inference
-model = LinearModel()
-test_input = torch.randn(1, 8)
-print("Test output:", model(test_input))
+if __name__ == "__main__":
+    model = load('linear_regression.joblib')
+    params = safe_quantize(model)
+    dump(params, 'quant_params.joblib')
